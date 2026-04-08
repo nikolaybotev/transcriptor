@@ -23,8 +23,14 @@ os.environ['HF_HOME'] = model_cache_dir
 
 from faster_whisper import WhisperModel
 
-model = WhisperModel(model_size, device='cpu', compute_type='int8',
-                     download_root=model_cache_dir)
+cpu_threads = os.cpu_count() or 4
+model = WhisperModel(
+    model_size,
+    device='cpu',
+    compute_type='int8',
+    download_root=model_cache_dir,
+    cpu_threads=cpu_threads,
+)
 
 segments, info = model.transcribe(audio_file, beam_size=5)
 
