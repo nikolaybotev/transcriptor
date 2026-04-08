@@ -1,3 +1,4 @@
 *.mp3
+*.raw
 /whisper-models
 /__pycache__
