@@ -34,5 +34,7 @@ model = WhisperModel(
 
 segments, info = model.transcribe(audio_file, beam_size=5)
 
-text = ' '.join(segment.text.strip() for segment in segments)
-print(text)
+for segment in segments:
+    sys.stdout.write(segment.text)
+    sys.stdout.flush()
+sys.stdout.write('\n')
