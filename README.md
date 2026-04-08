@@ -58,11 +58,37 @@ Use `-` as `audio_file` to read **raw PCM** from stdin: **s16le, mono, 16 kHz** 
 
 Optional `model_size` values include `tiny.en`, `base.en` (default), and `small.en`. Optional `model_cache_dir` is where Whisper / Hugging Face stores downloaded models; it defaults to `./whisper-models`.
 
-### Memory: raw stdin vs passing an MP3 path
+### Memory
 
-Pre-decoding to a `.raw` file (or piping s16le from ffmpeg) **skips the few seconds** faster-whisper would otherwise spend decoding and transcoding the MP3 inside PyAV. In practice, though:
+How RAM behaves depends on **how you feed audio** (file path vs raw stdin) and **how long** the source is. Figures below are from one machine; model variant, threads, and OS will move them.
 
-- **Peak memory** during the run can **still reach on the order of ~9 GB** (same ballpark as with an MP3 path)—the heavy mel/STFT path is unchanged.
-- **Steady-state RSS after that spike** was roughly **~1.4 GB** when feeding pre-decoded raw via stdin, versus **~700 MB** when passing the **MP3 file path** and letting the library decode it. The stdin path builds a full **float32 waveform** in Python (`numpy`) in addition to the model’s own buffers, which roughly doubles retained audio-related memory versus streaming decode from a file.
+**Summary**
 
-So raw input is mainly a **latency / CPU** win for the decode step, not a way to cut peak RAM; for lower steady-state memory on long files, prefer passing the **media file path** when possible.
+- Startup memory spike scales **linearly** with audio duration—about **4.5 GB per hour** (see table).
+- Preloading raw audio samples for Whisper (stdin path) is **less memory-efficient**; it **roughly doubles** steady-state memory use during transcription compared to passing a media file path.
+
+#### Peak RSS vs duration
+
+Peak usage hits when the **feature pipeline** runs (building mel / STFT for the encoder). It scales **roughly linearly** with source length and is **similar whether the input is an MP3 path or pre-decoded stdin**—container format is not the main driver.
+
+Assume **~300 MB** (~0.3 GB) for the **int8 model** in RAM; the table subtracts that so the rest is mostly spectrogram-related buffers.
+
+| Duration | Peak RSS (approx.) | Rel. duration (× 30 min) | Peak minus ~300 MB model (GB) | Rel. Δ peak (× 30 min Δ) |
+|----------|-------------------:|-------------------------:|---------------------------------:|-------------------------:|
+| 30 min   | 2.5 GB | 1× | 2.2 | 1× |
+| 1 hour   | 4.7 GB | 2× | 4.4 | 2× |
+| 2 h 18 min (full video) | 10.2 GB | 4.6× | 9.9 | 4.5× |
+
+The “minus ~300 MB” column treats **0.3 GB** as the int8 model only; any other tiny fixed overhead is rolled into that variable bucket.
+
+**Linearity:** From **30 min → 1 h**, duration and variable peak **both double** (1×→2× and 2.2 GB→4.4 GB)—exactly linear after removing the model floor. The **full video** (4.6× the 30-minute row) would predict **4.6 × 2.2 ≈ 10.1 GB** variable; **9.9 GB** measured is within **~2%**—still linear for practical estimates.
+
+#### Why peak grows with length
+
+Whisper does not eat raw samples directly. Audio becomes a **log-mel spectrogram**: an **STFT** over overlapping windows, then **mel** filters to a 2D “image” over time. Long files mean large feature tensors (and STFT intermediates) in memory, so peak RSS tracks duration whether audio came from PyAV (MP3 path) or a numpy buffer (stdin).
+
+#### Raw stdin vs MP3 path
+
+Pre-decoding to `.raw` or piping **s16le** avoids **a few seconds** of in-process decode/transcode (PyAV). It does **not** remove the big mel/STFT peak above.
+
+After the spike, **steady-state RSS** was about **~1.4 GB** with stdin and **~700 MB** with an **MP3 path**—stdin keeps a full **float32** waveform in Python on top of the model. For long jobs, prefer passing the **media file path** if you want lower steady-state memory; raw stdin is mainly a **latency / CPU** win on decode, not a RAM win.
